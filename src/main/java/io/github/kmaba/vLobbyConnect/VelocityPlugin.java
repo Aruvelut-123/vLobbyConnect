@@ -2,8 +2,9 @@ package io.github.kmaba.vLobbyConnect;
 
 import com.google.inject.Inject;
 import com.velocitypowered.api.event.Subscribe;
-import com.velocitypowered.api.event.PostOrder;
 import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
+import com.velocitypowered.api.event.player.PlayerClientBrandEvent;
+import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.proxy.Player;
@@ -13,21 +14,12 @@ import org.slf4j.Logger;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import org.yaml.snakeyaml.Yaml;
 
-import net.kyori.adventure.text.Component;
-
-import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -46,164 +38,142 @@ public final class VelocityPlugin {
 	@Inject
 	private com.velocitypowered.api.proxy.ProxyServer server;
 
-	@Inject
-	private Metrics.Factory metricsFactory;
-
-	private final Map<String, List<RegisteredServer>> versionLobbies = new HashMap<>();
-	private final Map<UUID, Integer> connectionAttempts = new ConcurrentHashMap<>();
+	private RegisteredServer defaultServer;
+	private final Map<String, RegisteredServer> brandLobbies = new HashMap<>();
+	private final Map<UUID, String> playerBrands = new ConcurrentHashMap<>();
 
 	@Subscribe
 	public void onProxyInitialize(ProxyInitializeEvent event) {
-		int pluginId = 24615;
-		Metrics metrics = metricsFactory.make(this, pluginId);
-
 		try {
 			// Load the config.yml file
 			Yaml yaml = new Yaml();
 			File configFile = new File("plugins/vLobbyConnect/config.yml");
 			if (!configFile.exists()) {
 				configFile.getParentFile().mkdirs();
-				Files.copy(getClass().getResourceAsStream("/config.yml"), configFile.toPath());
+				Files.copy(Objects.requireNonNull(getClass().getResourceAsStream("/config.yml")), configFile.toPath());
 			}
 
 			// Parse the config.yml file
 			Map<String, Object> config = yaml.load(Files.newInputStream(configFile.toPath()));
-			Map<String, String> lobbies = (Map<String, String>) config.get("lobbies");
-			if (lobbies == null) {
-				logger.error("Failed to load lobby settings.");
+			Map<String, String> brandRoutes = (Map<String, String>) config.get("brand-routes");
+			if (brandRoutes == null) {
+				logger.error("Failed to load brand-routes from config.yml");
+				return;
+			}
+
+			String defaultServer = (String) config.get("default-server");
+			if (defaultServer == null) {
+				logger.error("default-server not specified in config.yml");
 				return;
 			}
 
 			// Validate and log the configuration
-			Pattern pattern = Pattern.compile("^(\\d+\\.\\d+)lobby(\\d+)$");
-			for (Map.Entry<String, String> entry : lobbies.entrySet()) {
-				Matcher matcher = pattern.matcher(entry.getKey());
+			Pattern pattern = Pattern.compile("^([a-zA-Z0-9_-]+)$");
+			for (Map.Entry<String, String> entry : brandRoutes.entrySet()) {
+				String brandKey = entry.getKey().toLowerCase();
+				String serverName = entry.getValue();
+
+				Matcher matcher = pattern.matcher(brandKey);
 				if (matcher.matches()) {
-					String version = matcher.group(1);
-					String lobbyName = entry.getValue();
-					Optional<RegisteredServer> serverOpt = server.getServer(lobbyName);
+					Optional<RegisteredServer> serverOpt = server.getServer(serverName);
 					if (serverOpt.isPresent()) {
-						versionLobbies.computeIfAbsent(version, k -> new ArrayList<>()).add(serverOpt.get());
-						// Updated logging: Removed protocol version from the log
-						logger.info("Config Lobbies, [VERSION] {} Lobby number: {} IP: {}", version, matcher.group(2), serverOpt.get().getServerInfo().getAddress());
+						brandLobbies.computeIfAbsent(brandKey, k -> serverOpt.get());
+						logger.info("Brand Route: '{}' -> Server '{}' ({})",
+								brandKey, serverName, serverOpt.get().getServerInfo().getAddress());
 					} else {
-						logger.warn("Lobby server '{}' not found in Velocity configuration.", lobbyName);
+						logger.warn("Server '{}' for brand '{}' not found in Velocity configuration.",
+								serverName, brandKey);
 					}
 				} else {
-					logger.warn("Invalid lobby configuration key: {}", entry.getKey());
+					logger.warn("Invalid brand key format: '{}'. Use alphanumeric, underscores, or hyphens only.",
+							entry.getKey());
 				}
 			}
 
-			// Check if all lobbies were retrieved successfully
-			if (versionLobbies.isEmpty()) {
-				logger.error("No valid lobbies were found. Ensure they are defined in velocity.toml.");
+			// Validate default server
+			Optional<RegisteredServer> defaultServerOpt = server.getServer(defaultServer);
+			if (defaultServerOpt.isPresent()) {
+				this.defaultServer = defaultServerOpt.get();
+				logger.info("Default fallback server: '{}' ({})",
+						defaultServer, defaultServerOpt.get().getServerInfo().getAddress());
 			} else {
-				logger.info("vLobbyConnect initialized successfully.");
+				logger.error("Default server '{}' not found in Velocity configuration.", defaultServer);
 			}
 		} catch (IOException e) {
 			logger.error("Failed to load config.yml", e);
 		}
-
-		// Register commands
-		server.getCommandManager().register("hub", new HubCommand(server, logger));
-		server.getCommandManager().register("lobby", new LobbyCommand(server, logger));
 	}
 
-	@Subscribe(order = PostOrder.FIRST)
-	void onPlayerJoin(final PlayerChooseInitialServerEvent event) {
+	@Subscribe
+	public void onPlayerChooseInitialServer(PlayerChooseInitialServerEvent event) {
 		Player player = event.getPlayer();
-		UUID uuid = player.getUniqueId();
-		int attempts = connectionAttempts.getOrDefault(uuid, 0) + 1;
-		connectionAttempts.put(uuid, attempts);
+		String username = player.getUsername();
 
-		String version = player.getProtocolVersion().getName();
-		List<RegisteredServer> lobbies = versionLobbies.get(version);
-		// Fallback if no exact match exists:
-		if (lobbies == null || lobbies.isEmpty()) {
-			lobbies = getFallbackLobbies(version);
-		}
-		
-		if (lobbies == null || lobbies.isEmpty()) {
-			player.sendMessage(Component.text("No lobbies available for your Minecraft version."));
-			logger.warn("No lobbies available for version {}", version);
-			return;
-		}
+		// We need to get the client brand - but it might not be available yet at this point!
+		// The brand is usually sent after initial server selection.
+		// So we should store the routing decision and apply it later.
 
-		RegisteredServer targetServer = getLeastLoadedLobby(lobbies);
+		// Alternative approach: Store the intended server for this player
+		// and handle actual connection in ServerPreConnectEvent
 
-		if (targetServer == null) {
-			// Try fallback lobbies if all version-specific lobbies are offline
-			List<RegisteredServer> fallbackLobbies = getFallbackLobbies(version);
-			if (fallbackLobbies != null && !fallbackLobbies.isEmpty()) {
-				targetServer = getLeastLoadedLobby(fallbackLobbies);
+		logger.warn("Player {} is choosing initial server, but brand may not be available yet.", username);
+	}
+
+	@Subscribe
+	public void onPlayerClientBrand(PlayerClientBrandEvent event) {
+		String brand = event.getBrand().toLowerCase();
+		Player player = event.getPlayer();
+		String username = player.getUsername();
+
+		// Store the brand for this player
+		playerBrands.put(player.getUniqueId(), brand);
+		logger.info("Player '{}' client brand detected: '{}'", username, brand);
+	}
+
+	@Subscribe
+	public void onServerPreConnect(ServerPreConnectEvent event) {
+		Player player = event.getPlayer();
+		String username = player.getUsername();
+		UUID playerId = player.getUniqueId();
+
+		// Check if we have a brand for this player
+		String brand = playerBrands.get(playerId);
+
+		if (brand != null) {
+			// Check if we have a specific route for this brand
+			RegisteredServer targetServer = brandLobbies.get(brand);
+
+			if (targetServer != null) {
+				// Exact brand match found
+				event.setResult(ServerPreConnectEvent.ServerResult.allowed(targetServer));
+				logger.info("Player '{}' (brand: '{}') routed to specific server: {}",
+						username, brand, targetServer.getServerInfo().getName());
+			} else {
+				// Check for partial matches (e.g., "neoforge" in "neoforge-1.20")
+				String matchedBrand = null;
+				for (Map.Entry<String, RegisteredServer> entry : brandLobbies.entrySet()) {
+					if (brand.contains(entry.getKey())) {
+						matchedBrand = entry.getKey();
+						targetServer = entry.getValue();
+						break;
+					}
+				}
+
+				if (targetServer != null) {
+					// Partial match found
+					event.setResult(ServerPreConnectEvent.ServerResult.allowed(targetServer));
+					logger.info("Player '{}' (brand: '{}') matched partial brand '{}' -> server: {}",
+							username, brand, matchedBrand, targetServer.getServerInfo().getName());
+				} else {
+					// No match found, use default server
+					event.setResult(ServerPreConnectEvent.ServerResult.allowed(defaultServer));
+					logger.info("Player '{}' (brand: '{}') has no specific route, using default server: {}",
+							username, brand, defaultServer.getServerInfo().getName());
+				}
 			}
-		}
 
-		if (targetServer == null) {
-			player.sendMessage(Component.text("All lobbies are currently unavailable, please try again later."));
-			logger.warn("All lobbies are offline for version {}", version);
-			return;
-		}
-
-		if (player.getCurrentServer().isPresent() &&
-			player.getCurrentServer().get().getServerInfo().getName().equals(targetServer.getServerInfo().getName())) {
-			player.sendMessage(Component.text("You are already in a lobby."));
-			return;
-		}
-
-		logger.info("Player {} connecting to lobby '{}'", player.getUsername(), targetServer.getServerInfo().getName());
-		// Instead of a connection request, set the initial server directly:
-		event.setInitialServer(targetServer);
-	}
-
-	private RegisteredServer getLeastLoadedLobby(List<RegisteredServer> lobbies) {
-		// Filter only online lobbies
-		List<RegisteredServer> onlineLobbies = lobbies.stream()
-			.filter(this::isServerOnline)
-			.collect(Collectors.toList());
-		
-		if (onlineLobbies.isEmpty()) {
-			return null;
-		}
-
-		return onlineLobbies.stream()
-			.min(Comparator.comparingInt(server -> server.getPlayersConnected().size()))
-			.orElse(null);
-	}
-
-	// Helper: Fallback to the highest available lobby version when an exact match is missing.
-	private List<RegisteredServer> getFallbackLobbies(String playerVersion) {
-		return versionLobbies.entrySet().stream()
-				.filter(entry -> compareVersions(entry.getKey(), playerVersion) <= 0)
-				.max((a, b) -> compareVersions(a.getKey(), b.getKey()))
-				.map(Map.Entry::getValue)
-				.orElse(null);
-	}
-
-	// Helper: Compare version strings (e.g. "1.8" vs "1.21.1")
-	private int compareVersions(String v1, String v2) {
-		String[] parts1 = v1.split("\\.");
-		String[] parts2 = v2.split("\\.");
-		int len = Math.max(parts1.length, parts2.length);
-		for (int i = 0; i < len; i++) {
-			int num1 = i < parts1.length ? Integer.parseInt(parts1[i]) : 0;
-			int num2 = i < parts2.length ? Integer.parseInt(parts2[i]) : 0;
-			if (num1 != num2) {
-				return num1 - num2;
-			}
-		}
-		return 0;
-	}
-
-	// Add this new helper method
-	private boolean isServerOnline(RegisteredServer server) {
-		try {
-			// Try to ping the server with a short timeout
-			server.ping().get(2, TimeUnit.SECONDS);
-			return true;
-		} catch (Exception e) {
-			logger.warn("Lobby '{}' appears to be offline", server.getServerInfo().getName());
-			return false;
+			// Clean up stored brand
+			playerBrands.remove(playerId);
 		}
 	}
 
@@ -214,16 +184,16 @@ public final class VelocityPlugin {
 		String serverName = kickedServer.getServerInfo().getName();
 
 		// If the kicked server is already a lobby, do nothing.
-		if (versionLobbies.values().stream().flatMap(List::stream).anyMatch(server -> server.getServerInfo().getName().equals(serverName))) {
+		if (brandLobbies.get(player.getClientBrand()).getServerInfo().getName().equals(serverName)) {
 			return;
 		}
 
 		RegisteredServer fallback = null;
-		String version = player.getProtocolVersion().getName();
-		List<RegisteredServer> lobbies = versionLobbies.get(version);
+		String brand = player.getClientBrand();
+		RegisteredServer lobby = brandLobbies.get(brand);
 
-		if (lobbies != null && !lobbies.isEmpty()) {
-			fallback = getLeastLoadedLobby(lobbies);
+		if (lobby != null) {
+			fallback = lobby;
 		}
 
 		if (fallback != null) {
@@ -233,8 +203,6 @@ public final class VelocityPlugin {
 
 	@Subscribe
 	public void onPlayerDisconnect(Player player) {
-		UUID uuid = player.getUniqueId();
-		connectionAttempts.remove(uuid);
 		logger.info("Player {} disconnected.", player.getUsername());
 	}
 }

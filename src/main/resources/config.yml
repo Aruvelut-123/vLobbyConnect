@@ -1,9 +1,22 @@
-lobbies:
-  1.20lobby1: "lobby1"
-  1.20lobby2: "lobby2"
-  1.8lobby1: "lobby3"
-  1.8lobby2: "lobby4"
+# Client brand routing configuration
+# Format: "brand-keyword" = "server-name-in-velocity-toml"
+brand-routes:
+  # NeoForge clients
+  neoforge: "neoforge-server"
 
-# To add more lobbies, follow the pattern "VERSIONlobbyX"
-# Example:
-# 1.13lobby8: "lobby5"
+  # Forge clients (older versions)
+  forge: "forge-server"
+
+  # Fabric clients
+  fabric: "fabric-server"
+
+  # Specific clients
+  lunarclient: "lunar-server"
+  badlion: "badlion-server"
+  vanilla: "vanilla-server"
+
+  # You can also use partial matches (e.g., any brand containing "forge")
+  # The plugin will check for contains() matches if exact match fails
+
+# Default fallback server when no brand matches
+default-server: "lobby-server"
