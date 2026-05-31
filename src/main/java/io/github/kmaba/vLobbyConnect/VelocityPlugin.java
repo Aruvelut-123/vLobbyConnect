@@ -20,16 +20,13 @@ import org.yaml.snakeyaml.Yaml;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 @Plugin(
 	id = "vlobbyconnect",
 	name = "vLobbyConnect",
-	url = "https://kmaba.link/",
 	description = "A Velocity Plugin for Lobby Connection",
 	version = Constants.VERSION,
-	authors = { "kmaba" }
+	authors = { "kmaba", "Baymaxawa" }
 )
 public final class VelocityPlugin {
 	@Inject
@@ -50,8 +47,8 @@ public final class VelocityPlugin {
 			Yaml yaml = new Yaml();
 			File configFile = new File("plugins/vLobbyConnect/config.yml");
 			if (!configFile.exists()) {
-				configFile.getParentFile().mkdirs();
-				Files.copy(Objects.requireNonNull(getClass().getResourceAsStream("/config.yml")), configFile.toPath());
+                configFile.getParentFile().mkdirs();
+                Files.copy(Objects.requireNonNull(getClass().getResourceAsStream("/config.yml")), configFile.toPath());
 			}
 
 			// Parse the config.yml file
@@ -68,8 +65,8 @@ public final class VelocityPlugin {
 				return;
 			}
 
-			Map<String, String> forceRoutes = (Map<String, String>) config.get("force-route");
-			if (forceRoutes == null) {
+			Map<String, String> forceRoute = (Map<String, String>) config.get("force-route");
+			if (forceRoute == null) {
 				logger.error("Failed to load force-route from config.yml");
 				return;
 			}
@@ -97,20 +94,20 @@ public final class VelocityPlugin {
 				}
 			}
 
-			for (Map.Entry<String, String> entry : forceRoutes.entrySet()) {
-				String brandKey = entry.getKey().toLowerCase();
+			for (Map.Entry<String, String> entry : forceRoute.entrySet()) {
+				String playerName = entry.getKey().toLowerCase();
 				String serverName = entry.getValue();
 
-				Matcher matcher = pattern.matcher(brandKey);
+				Matcher matcher = pattern.matcher(playerName);
 				if (matcher.matches()) {
 					Optional<RegisteredServer> serverOpt = server.getServer(serverName);
 					if (serverOpt.isPresent()) {
-						brandLobbies.computeIfAbsent(brandKey, k -> serverOpt.get());
+						forceRoutes.computeIfAbsent(playerName, k -> serverOpt.get());
 						logger.info("Force Route Player: '{}' -> Server '{}' ({})",
-								brandKey, serverName, serverOpt.get().getServerInfo().getAddress());
+								playerName, serverName, serverOpt.get().getServerInfo().getAddress());
 					} else {
 						logger.warn("Server '{}' for player '{}' not found in Velocity configuration.",
-								serverName, brandKey);
+								serverName, playerName);
 					}
 				} else {
 					logger.warn("Invalid force player name key format: '{}'. Use alphanumeric, underscores, or hyphens only.",
