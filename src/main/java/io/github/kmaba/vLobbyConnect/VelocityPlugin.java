@@ -40,6 +40,7 @@ public final class VelocityPlugin {
 
 	private RegisteredServer defaultServer;
 	private final Map<String, RegisteredServer> brandLobbies = new HashMap<>();
+	private final Map<String, RegisteredServer> forceRoutes = new HashMap<>();
 	private final Map<UUID, String> playerBrands = new ConcurrentHashMap<>();
 
 	@Subscribe
@@ -67,6 +68,12 @@ public final class VelocityPlugin {
 				return;
 			}
 
+			Map<String, String> forceRoutes = (Map<String, String>) config.get("force-route");
+			if (forceRoutes == null) {
+				logger.error("Failed to load force-route from config.yml");
+				return;
+			}
+
 			// Validate and log the configuration
 			Pattern pattern = Pattern.compile("^([a-zA-Z0-9_-]+)$");
 			for (Map.Entry<String, String> entry : brandRoutes.entrySet()) {
@@ -86,6 +93,27 @@ public final class VelocityPlugin {
 					}
 				} else {
 					logger.warn("Invalid brand key format: '{}'. Use alphanumeric, underscores, or hyphens only.",
+							entry.getKey());
+				}
+			}
+
+			for (Map.Entry<String, String> entry : forceRoutes.entrySet()) {
+				String brandKey = entry.getKey().toLowerCase();
+				String serverName = entry.getValue();
+
+				Matcher matcher = pattern.matcher(brandKey);
+				if (matcher.matches()) {
+					Optional<RegisteredServer> serverOpt = server.getServer(serverName);
+					if (serverOpt.isPresent()) {
+						brandLobbies.computeIfAbsent(brandKey, k -> serverOpt.get());
+						logger.info("Force Route Player: '{}' -> Server '{}' ({})",
+								brandKey, serverName, serverOpt.get().getServerInfo().getAddress());
+					} else {
+						logger.warn("Server '{}' for player '{}' not found in Velocity configuration.",
+								serverName, brandKey);
+					}
+				} else {
+					logger.warn("Invalid force player name key format: '{}'. Use alphanumeric, underscores, or hyphens only.",
 							entry.getKey());
 				}
 			}
@@ -140,35 +168,45 @@ public final class VelocityPlugin {
 		String brand = playerBrands.get(playerId);
 
 		if (brand != null) {
-			// Check if we have a specific route for this brand
-			RegisteredServer targetServer = brandLobbies.get(brand);
-
-			if (targetServer != null) {
+			// Check if player is in force-routes
+			RegisteredServer forceTarget = forceRoutes.get(username);
+			if (forceTarget != null) {
 				// Exact brand match found
-				event.setResult(ServerPreConnectEvent.ServerResult.allowed(targetServer));
-				logger.info("Player '{}' (brand: '{}') routed to specific server: {}",
-						username, brand, targetServer.getServerInfo().getName());
-			} else {
-				// Check for partial matches (e.g., "neoforge" in "neoforge-1.20")
-				String matchedBrand = null;
-				for (Map.Entry<String, RegisteredServer> entry : brandLobbies.entrySet()) {
-					if (brand.contains(entry.getKey())) {
-						matchedBrand = entry.getKey();
-						targetServer = entry.getValue();
-						break;
-					}
-				}
+				event.setResult(ServerPreConnectEvent.ServerResult.allowed(forceTarget));
+				logger.info("Player '{}' (brand: '{}') force routed to specific server: {}",
+						username, brand, forceTarget.getServerInfo().getName());
+			}
+			else {
+				// Check if we have a specific route for this brand
+				RegisteredServer targetServer = brandLobbies.get(brand);
 
 				if (targetServer != null) {
-					// Partial match found
+					// Exact brand match found
 					event.setResult(ServerPreConnectEvent.ServerResult.allowed(targetServer));
-					logger.info("Player '{}' (brand: '{}') matched partial brand '{}' -> server: {}",
-							username, brand, matchedBrand, targetServer.getServerInfo().getName());
+					logger.info("Player '{}' (brand: '{}') routed to specific server: {}",
+							username, brand, targetServer.getServerInfo().getName());
 				} else {
-					// No match found, use default server
-					event.setResult(ServerPreConnectEvent.ServerResult.allowed(defaultServer));
-					logger.info("Player '{}' (brand: '{}') has no specific route, using default server: {}",
-							username, brand, defaultServer.getServerInfo().getName());
+					// Check for partial matches (e.g., "neoforge" in "neoforge-1.20")
+					String matchedBrand = null;
+					for (Map.Entry<String, RegisteredServer> entry : brandLobbies.entrySet()) {
+						if (brand.contains(entry.getKey())) {
+							matchedBrand = entry.getKey();
+							targetServer = entry.getValue();
+							break;
+						}
+					}
+
+					if (targetServer != null) {
+						// Partial match found
+						event.setResult(ServerPreConnectEvent.ServerResult.allowed(targetServer));
+						logger.info("Player '{}' (brand: '{}') matched partial brand '{}' -> server: {}",
+								username, brand, matchedBrand, targetServer.getServerInfo().getName());
+					} else {
+						// No match found, use default server
+						event.setResult(ServerPreConnectEvent.ServerResult.allowed(defaultServer));
+						logger.info("Player '{}' (brand: '{}') has no specific route, using default server: {}",
+								username, brand, defaultServer.getServerInfo().getName());
+					}
 				}
 			}
 

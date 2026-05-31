@@ -20,3 +20,8 @@ brand-routes:
 
 # Default fallback server when no brand matches
 default-server: "lobby-server"
+
+# Force route for some usage if needed
+force-route:
+  # format: playername: "servername"
+  example: "test"
