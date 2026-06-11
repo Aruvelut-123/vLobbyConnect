@@ -1,6 +1,0 @@
-{
-  "tasks": {
-    "build": "./gradlew build",
-    "test": "sdk install java 17.0.2-open || sudo apt-get install openjdk-17-jdk"
-  }
-}

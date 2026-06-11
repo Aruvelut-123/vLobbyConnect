@@ -1,4 +1,4 @@
-# vLobbyConnect Fork – May not be the Ultimate Lobby Manager for Velocity Proxy  
+# vLobbyConnect Fork – Maybe not the Ultimate Lobby Manager for Velocity Proxy. But hey, it works, and that's enough.  
 
 ### Notice: This is not compatible with original one cause I haven't changed the names and other stuffs yet. Why? Cause I'm currently using it and lazy to migrate configurations.
 
