@@ -2,6 +2,7 @@ package io.github.kmaba.vLobbyConnect;
 
 import com.google.inject.Inject;
 import com.velocitypowered.api.event.Subscribe;
+import com.velocitypowered.api.event.player.KickedFromServerEvent;
 import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
 import com.velocitypowered.api.event.player.PlayerClientBrandEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
@@ -9,6 +10,7 @@ import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
 
 import java.io.File;
@@ -161,51 +163,51 @@ public final class VelocityPlugin {
 		String username = player.getUsername();
 		UUID playerId = player.getUniqueId();
 
-		// Check if we have a brand for this player
-		String brand = playerBrands.get(playerId);
+		// Check if player is in force-routes
+		RegisteredServer forceTarget = forceRoutes.get(username.toLowerCase());
+		if (forceTarget != null) {
+			// Exact brand match found
+			event.setResult(ServerPreConnectEvent.ServerResult.allowed(forceTarget));
+			logger.info("Player '{}' force routed to specific server: {}",
+					username, forceTarget.getServerInfo().getName());
+		}
+		else {
+			// Check if we have a brand for this player
+			String brand = playerBrands.get(playerId);
 
-		if (brand != null) {
-			// Check if player is in force-routes
-			RegisteredServer forceTarget = forceRoutes.get(username);
-			if (forceTarget != null) {
-				// Exact brand match found
-				event.setResult(ServerPreConnectEvent.ServerResult.allowed(forceTarget));
-				logger.info("Player '{}' (brand: '{}') force routed to specific server: {}",
-						username, brand, forceTarget.getServerInfo().getName());
-			}
-			else {
-				// Check if we have a specific route for this brand
-				RegisteredServer targetServer = brandLobbies.get(brand);
-
-				if (targetServer != null) {
-					// Exact brand match found
-					event.setResult(ServerPreConnectEvent.ServerResult.allowed(targetServer));
-					logger.info("Player '{}' (brand: '{}') routed to specific server: {}",
-							username, brand, targetServer.getServerInfo().getName());
-				} else {
-					// Check for partial matches (e.g., "neoforge" in "neoforge-1.20")
-					String matchedBrand = null;
-					for (Map.Entry<String, RegisteredServer> entry : brandLobbies.entrySet()) {
-						if (brand.contains(entry.getKey())) {
-							matchedBrand = entry.getKey();
-							targetServer = entry.getValue();
-							break;
-						}
-					}
+			if (brand != null) {
+					// Check if we have a specific route for this brand
+					RegisteredServer targetServer = brandLobbies.get(brand);
 
 					if (targetServer != null) {
-						// Partial match found
+						// Exact brand match found
 						event.setResult(ServerPreConnectEvent.ServerResult.allowed(targetServer));
-						logger.info("Player '{}' (brand: '{}') matched partial brand '{}' -> server: {}",
-								username, brand, matchedBrand, targetServer.getServerInfo().getName());
+						logger.info("Player '{}' (brand: '{}') routed to specific server: {}",
+								username, brand, targetServer.getServerInfo().getName());
 					} else {
-						// No match found, use default server
-						event.setResult(ServerPreConnectEvent.ServerResult.allowed(defaultServer));
-						logger.info("Player '{}' (brand: '{}') has no specific route, using default server: {}",
-								username, brand, defaultServer.getServerInfo().getName());
+						// Check for partial matches (e.g., "neoforge" in "neoforge-1.20")
+						String matchedBrand = null;
+						for (Map.Entry<String, RegisteredServer> entry : brandLobbies.entrySet()) {
+							if (brand.contains(entry.getKey())) {
+								matchedBrand = entry.getKey();
+								targetServer = entry.getValue();
+								break;
+							}
+						}
+
+						if (targetServer != null) {
+							// Partial match found
+							event.setResult(ServerPreConnectEvent.ServerResult.allowed(targetServer));
+							logger.info("Player '{}' (brand: '{}') matched partial brand '{}' -> server: {}",
+									username, brand, matchedBrand, targetServer.getServerInfo().getName());
+						} else {
+							// No match found, use default server
+							event.setResult(ServerPreConnectEvent.ServerResult.allowed(defaultServer));
+							logger.info("Player '{}' (brand: '{}') has no specific route, using default server: {}",
+									username, brand, defaultServer.getServerInfo().getName());
+						}
 					}
 				}
-			}
 
 			// Clean up stored brand
 			playerBrands.remove(playerId);
@@ -218,8 +220,10 @@ public final class VelocityPlugin {
 		RegisteredServer kickedServer = event.getServer();
 		String serverName = kickedServer.getServerInfo().getName();
 
-		// If the kicked server is already a lobby, do nothing.
+		// If the kicked server is already dedicated modded server, then transfer the kick reason to them in case they need.
 		if (brandLobbies.get(player.getClientBrand()).getServerInfo().getName().equals(serverName)) {
+			Component kickReason = event.getServerKickReason().orElse(Component.text("Kicked For Unknown Reason! Let Administrator to check logs!!!"));
+			event.setResult(KickedFromServerEvent.DisconnectPlayer.create(kickReason));
 			return;
 		}
 
