@@ -1,6 +1,9 @@
 package io.github.kmaba.vLobbyConnect;
 
 import com.google.inject.Inject;
+import com.velocitypowered.api.command.BrigadierCommand;
+import com.velocitypowered.api.command.Command;
+import com.velocitypowered.api.command.CommandMeta;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.player.KickedFromServerEvent;
 import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
@@ -16,6 +19,7 @@ import org.slf4j.Logger;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.attribute.FileAttribute;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import org.yaml.snakeyaml.Yaml;
@@ -37,6 +41,10 @@ public final class VelocityPlugin {
 	@Inject
 	private com.velocitypowered.api.proxy.ProxyServer server;
 
+	@Inject
+	private com.velocitypowered.api.command.CommandManager commandManager;
+
+	public static VelocityPlugin INSTANCE;
 	private RegisteredServer defaultServer;
 	private final Map<String, RegisteredServer> brandLobbies = new HashMap<>();
 	private final Map<String, RegisteredServer> forceRoutes = new HashMap<>();
@@ -44,13 +52,25 @@ public final class VelocityPlugin {
 
 	@Subscribe
 	public void onProxyInitialize(ProxyInitializeEvent event) {
+		INSTANCE = this;
+		CommandManager eventMessageCommand = new CommandManager();
+		BrigadierCommand brigadierCommand = eventMessageCommand.createCommand(this.server);
+
+		CommandMeta eventMessageMeta = this.commandManager.metaBuilder("vlobbyconnect")
+				.plugin(this)
+				.aliases(new String[] { "vlc" }).build();
+		this.commandManager.register(eventMessageMeta, (Command)brigadierCommand);
+		loadConfig();
+	}
+
+	public void loadConfig() {
 		try {
 			// Load the config.yml file
 			Yaml yaml = new Yaml();
 			File configFile = new File("plugins/vLobbyConnect/config.yml");
 			if (!configFile.exists()) {
-                configFile.getParentFile().mkdirs();
-                Files.copy(Objects.requireNonNull(getClass().getResourceAsStream("/config.yml")), configFile.toPath());
+				configFile.getParentFile().mkdirs();
+				Files.copy(Objects.requireNonNull(getClass().getResourceAsStream("/config.yml")), configFile.toPath());
 			}
 
 			// Parse the config.yml file
@@ -129,6 +149,10 @@ public final class VelocityPlugin {
 		} catch (IOException e) {
 			logger.error("Failed to load config.yml", e);
 		}
+	}
+
+	public void reloadConfig() {
+		loadConfig();
 	}
 
 	@Subscribe
