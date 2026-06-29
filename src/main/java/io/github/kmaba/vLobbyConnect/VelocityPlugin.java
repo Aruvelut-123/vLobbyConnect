@@ -5,8 +5,8 @@ import com.velocitypowered.api.command.BrigadierCommand;
 import com.velocitypowered.api.command.Command;
 import com.velocitypowered.api.command.CommandMeta;
 import com.velocitypowered.api.event.Subscribe;
+import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.event.player.KickedFromServerEvent;
-import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
 import com.velocitypowered.api.event.player.PlayerClientBrandEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
@@ -19,7 +19,6 @@ import org.slf4j.Logger;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.attribute.FileAttribute;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import org.yaml.snakeyaml.Yaml;
@@ -49,10 +48,12 @@ public final class VelocityPlugin {
 	private final Map<String, RegisteredServer> brandLobbies = new HashMap<>();
 	private final Map<String, RegisteredServer> forceRoutes = new HashMap<>();
 	private final Map<UUID, String> playerBrands = new ConcurrentHashMap<>();
+	private final ArrayList<String> onlinePlayers = new ArrayList<String>();
 
-	@Subscribe
+    @Subscribe
 	public void onProxyInitialize(ProxyInitializeEvent event) {
 		INSTANCE = this;
+
 		CommandManager eventMessageCommand = new CommandManager();
 		BrigadierCommand brigadierCommand = eventMessageCommand.createCommand(this.server);
 
@@ -65,6 +66,8 @@ public final class VelocityPlugin {
 
 	public void loadConfig() {
 		try {
+			brandLobbies.clear();
+			forceRoutes.clear();
 			// Load the config.yml file
 			Yaml yaml = new Yaml();
 			File configFile = new File("plugins/vLobbyConnect/config.yml");
@@ -156,21 +159,6 @@ public final class VelocityPlugin {
 	}
 
 	@Subscribe
-	public void onPlayerChooseInitialServer(PlayerChooseInitialServerEvent event) {
-		Player player = event.getPlayer();
-		String username = player.getUsername();
-
-		// We need to get the client brand - but it might not be available yet at this point!
-		// The brand is usually sent after initial server selection.
-		// So we should store the routing decision and apply it later.
-
-		// Alternative approach: Store the intended server for this player
-		// and handle actual connection in ServerPreConnectEvent
-
-		logger.warn("Player {} is choosing initial server, but brand may not be available yet.", username);
-	}
-
-	@Subscribe
 	public void onPlayerClientBrand(PlayerClientBrandEvent event) {
 		String brand = event.getBrand().toLowerCase();
 		Player player = event.getPlayer();
@@ -184,22 +172,24 @@ public final class VelocityPlugin {
 	@Subscribe
 	public void onServerPreConnect(ServerPreConnectEvent event) {
 		Player player = event.getPlayer();
+		RegisteredServer originalServer = event.getOriginalServer();
 		String username = player.getUsername();
 		UUID playerId = player.getUniqueId();
+		if (onlinePlayers.contains(username)) {
+			event.setResult(ServerPreConnectEvent.ServerResult.allowed(originalServer));
+		} else {
+			// Check if player is in force-routes
+			RegisteredServer forceTarget = forceRoutes.get(username.toLowerCase());
+			if (forceTarget != null) {
+				// Exact brand match found
+				event.setResult(ServerPreConnectEvent.ServerResult.allowed(forceTarget));
+				logger.info("Player '{}' force routed to specific server: {}",
+						username, forceTarget.getServerInfo().getName());
+			} else {
+				// Check if we have a brand for this player
+				String brand = playerBrands.get(playerId);
 
-		// Check if player is in force-routes
-		RegisteredServer forceTarget = forceRoutes.get(username.toLowerCase());
-		if (forceTarget != null) {
-			// Exact brand match found
-			event.setResult(ServerPreConnectEvent.ServerResult.allowed(forceTarget));
-			logger.info("Player '{}' force routed to specific server: {}",
-					username, forceTarget.getServerInfo().getName());
-		}
-		else {
-			// Check if we have a brand for this player
-			String brand = playerBrands.get(playerId);
-
-			if (brand != null) {
+				if (brand != null) {
 					// Check if we have a specific route for this brand
 					RegisteredServer targetServer = brandLobbies.get(brand);
 
@@ -233,8 +223,9 @@ public final class VelocityPlugin {
 					}
 				}
 
-			// Clean up stored brand
-			playerBrands.remove(playerId);
+				// Clean up stored brand
+				playerBrands.remove(playerId);
+			}
 		}
 	}
 
@@ -243,29 +234,68 @@ public final class VelocityPlugin {
 		Player player = event.getPlayer();
 		RegisteredServer kickedServer = event.getServer();
 		String serverName = kickedServer.getServerInfo().getName();
+		Component kickReason = event.getServerKickReason().orElse(Component.text("Kicked For Unknown Reason! Let Administrator to check logs!!!"));
+		onlinePlayers.remove(player.getUsername());
 
-		// If the kicked server is already dedicated modded server, then transfer the kick reason to them in case they need.
-		if (brandLobbies.get(player.getClientBrand()).getServerInfo().getName().equals(serverName)) {
-			Component kickReason = event.getServerKickReason().orElse(Component.text("Kicked For Unknown Reason! Let Administrator to check logs!!!"));
-			event.setResult(KickedFromServerEvent.DisconnectPlayer.create(kickReason));
-			return;
-		}
+		try {
+			if (brandLobbies.get(player.getClientBrand()).getServerInfo().getName().equals(serverName)) {
+				if (!event.getServerKickReason().toString().contains("velocity.error") && !event.getServerKickReason().toString().contains("velocity.kick")) {
+					event.setResult(KickedFromServerEvent.DisconnectPlayer.create(kickReason));
+				}
+			} else if (forceRoutes.get(player.getUsername()).getServerInfo().getName().equals(serverName)) {
+				if (!event.getServerKickReason().toString().contains("velocity.error") && !event.getServerKickReason().toString().contains("velocity.kick")) {
+					event.setResult(KickedFromServerEvent.DisconnectPlayer.create(kickReason));
+				}
+			} else {
+				logger.info(kickedServer.getServerInfo().getName());
+			}
+		} catch (Exception e) {
+			logger.error(e.getLocalizedMessage());
+		} finally {
+			if (player.getClientBrand() != null) {
+				String brand = player.getClientBrand();
+				RegisteredServer fallback = brandLobbies.get(brand);
 
-		RegisteredServer fallback = null;
-		String brand = player.getClientBrand();
-		RegisteredServer lobby = brandLobbies.get(brand);
-
-		if (lobby != null) {
-			fallback = lobby;
-		}
-
-		if (fallback != null) {
-			event.setResult(com.velocitypowered.api.event.player.KickedFromServerEvent.RedirectPlayer.create(fallback));
+				if (fallback != null && !Objects.equals(fallback.getServerInfo().getName(), kickedServer.getServerInfo().getName())) {
+					event.setResult(com.velocitypowered.api.event.player.KickedFromServerEvent.RedirectPlayer.create(fallback));
+				}
+			} else {
+				logger.error("Player username or client brand is null! It's most likely due to connecting with 1.13- versions.");
+			}
 		}
 	}
 
 	@Subscribe
 	public void onPlayerDisconnect(Player player) {
+		onlinePlayers.remove(player.getUsername());
 		logger.info("Player {} disconnected.", player.getUsername());
+	}
+
+	@Subscribe
+	public void onDisconnect(DisconnectEvent event) {
+		// Check if the disconnect was due to a connection error
+		DisconnectEvent.LoginStatus status = event.getLoginStatus();
+
+		if (status == null) return;
+
+		// Handle different login statuses
+		String message = getStatusMessage(status);
+		if (message != null) {
+			event.getPlayer().sendMessage(Component.text(message));
+
+			// Log it
+			logger.info("Player {} disconnected with status: {}",
+					event.getPlayer().getUsername(), status.name());
+		}
+	}
+
+	private String getStatusMessage(DisconnectEvent.LoginStatus status) {
+        return switch (status) {
+            case CONFLICTING_LOGIN -> "✖ You are already logged in!";
+            case CANCELLED_BY_USER -> "✖ Connection failed!\n§7User canceled the connection.";
+            case CANCELLED_BY_PROXY -> "✖ Connection failed!\n§7Proxy canceled the connection.";
+            case CANCELLED_BY_USER_BEFORE_COMPLETE -> "✖ Connection failed!\n§7User canceled the connection before it completes.";
+            default -> "✖ Connection failed: " + status.name();
+        };
 	}
 }
