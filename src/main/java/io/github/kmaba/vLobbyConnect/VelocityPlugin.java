@@ -5,7 +5,6 @@ import com.velocitypowered.api.command.BrigadierCommand;
 import com.velocitypowered.api.command.Command;
 import com.velocitypowered.api.command.CommandMeta;
 import com.velocitypowered.api.event.Subscribe;
-import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.event.player.KickedFromServerEvent;
 import com.velocitypowered.api.event.player.PlayerClientBrandEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
@@ -269,33 +268,5 @@ public final class VelocityPlugin {
 	public void onPlayerDisconnect(Player player) {
 		onlinePlayers.remove(player.getUsername());
 		logger.info("Player {} disconnected.", player.getUsername());
-	}
-
-	@Subscribe
-	public void onDisconnect(DisconnectEvent event) {
-		// Check if the disconnect was due to a connection error
-		DisconnectEvent.LoginStatus status = event.getLoginStatus();
-
-		if (status == null) return;
-
-		// Handle different login statuses
-		String message = getStatusMessage(status);
-		if (message != null) {
-			event.getPlayer().sendMessage(Component.text(message));
-
-			// Log it
-			logger.info("Player {} disconnected with status: {}",
-					event.getPlayer().getUsername(), status.name());
-		}
-	}
-
-	private String getStatusMessage(DisconnectEvent.LoginStatus status) {
-        return switch (status) {
-            case CONFLICTING_LOGIN -> "✖ You are already logged in!";
-            case CANCELLED_BY_USER -> "✖ Connection failed!\n§7User canceled the connection.";
-            case CANCELLED_BY_PROXY -> "✖ Connection failed!\n§7Proxy canceled the connection.";
-            case CANCELLED_BY_USER_BEFORE_COMPLETE -> "✖ Connection failed!\n§7User canceled the connection before it completes.";
-            default -> "✖ Connection failed: " + status.name();
-        };
 	}
 }
