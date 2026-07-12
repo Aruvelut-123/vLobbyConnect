@@ -66,8 +66,8 @@ try = []   # maybe not keep your fallback empty may cause strange errors (tho it
 ```
 
 ## ⚡ Commands  
-No more commands, I deleted them cause I don't want to maintain that when I can just use others.  
-And also, this version just supports one server for each modloader brand, why bothering adding /hub to it? Just use SlashHUB plugin if you have normal servers besides modded servers.
+- /vlc and /vlc help - Display help message
+- /vlc reload - reload the config file
 
 ## 🛡️ Future Enhancements (Planned Features)  
 - **Customizable Messages** – Modify join/fallback messages (bro if you really need this, go check out my other project called [EventMessage](https://github.com/Aruvelut-123/EventMessage), it just does this thing!)  
