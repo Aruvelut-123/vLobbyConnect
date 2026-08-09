@@ -69,9 +69,6 @@ try = []   # maybe not keep your fallback empty may cause strange errors (tho it
 - /vlc and /vlc help - Display help message
 - /vlc reload - reload the config file
 
-## 🛡️ Future Enhancements (Planned Features)  
-- **Customizable Messages** – Modify join/fallback messages (bro if you really need this, go check out my other project called [EventMessage](https://github.com/Aruvelut-123/EventMessage), it just does this thing!)  
-
 ## 🎮 Conclusion  
 vLobbyConnect was the **ultimate lobby management solution** for Velocity servers, ensuring a smooth, version-compatible experience for all players. Download it today and **enhance your network’s performance and player experience!** 🚀  
 Until I fork and modified it :)  
